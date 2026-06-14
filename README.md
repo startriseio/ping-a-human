@@ -24,6 +24,19 @@ The server exposes two tools over stdio:
   - On timeout it returns a clear timed-out result instead of an error, so the calling agent gets a
     clean signal. Default timeout is 5 minutes.
 
+## Install
+
+No clone or build required. The server runs straight from npm via your package runner:
+
+```bash
+npx  ping-a-human setup     # npm
+bunx ping-a-human setup     # bun
+pnpm dlx ping-a-human setup # pnpm
+```
+
+Your MCP client (Claude Desktop, Cursor, etc.) launches it the same way (see step 2) — so end users
+never install anything globally. Cloning the repo is only needed for contributing.
+
 ## Quickstart
 
 ### 1. Create a Telegram bot and configure the server
