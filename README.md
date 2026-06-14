@@ -98,6 +98,19 @@ The server reads configuration with this precedence:
 The bot token is a secret — it is never logged or echoed. All diagnostics go to **stderr**; **stdout**
 is reserved for the MCP JSON-RPC channel.
 
+## Use it in pi
+
+Using the [pi](https://pi.dev) coding agent? One command wires ping-a-human into
+pi's hooks for notifications, human-in-the-loop approval, a `/ping` command, and a
+global `pah` CLI:
+
+```bash
+npx ping-a-human-pi
+```
+
+See the [`ping-a-human-pi`](./ping-a-human-pi) package or the
+[pi guide](https://github.com/startriseio/ping-a-human/tree/main/ping-a-human-pi).
+
 ## Local development
 
 ```bash
