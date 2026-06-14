@@ -176,3 +176,76 @@ test("awaitReply returns a structured timeout when no reply arrives", async () =
 
   assert.equal(reply.status, "timeout");
 });
+
+test("awaitReply ignores a stale /start command queued before the question", async () => {
+  // Regression: the human opened the bot first, which queues a `/start`
+  // message. The question is then sent (message_id 50). The poller must NOT
+  // return that older `/start` as the answer; it must wait for the real reply.
+  const mock = makeMockFetch();
+  // First poll: the backlog `/start` (message_id 40 < question's 50).
+  mock.enqueue("getUpdates", [
+    {
+      update_id: 200,
+      message: {
+        message_id: 40,
+        text: "/start",
+        from: { id: 42, first_name: "Mara" },
+        chat: { id: Number(CHAT_ID) },
+      },
+    },
+  ]);
+  // Second poll: the genuine reply (message_id 51 > question's 50).
+  mock.enqueue("getUpdates", [
+    {
+      update_id: 201,
+      message: {
+        message_id: 51,
+        text: "YES",
+        from: { id: 42, first_name: "Mara" },
+        chat: { id: Number(CHAT_ID) },
+      },
+    },
+  ]);
+  const ch = makeChannel(mock);
+
+  // sinceRef anchors on the sent question's message id (50).
+  const reply = await ch.awaitReply({
+    timeoutMs: 2000,
+    sinceRef: { id: "50" },
+  });
+
+  assert.equal(reply.status, "answered");
+  assert.equal(reply.answer, "YES", "must return the real reply, not /start");
+});
+
+test("awaitReply skips a bare /start even without a sinceRef anchor", async () => {
+  const mock = makeMockFetch();
+  mock.enqueue("getUpdates", [
+    {
+      update_id: 300,
+      message: {
+        message_id: 1,
+        text: "/start",
+        from: { id: 9, first_name: "Sol" },
+        chat: { id: Number(CHAT_ID) },
+      },
+    },
+  ]);
+  mock.enqueue("getUpdates", [
+    {
+      update_id: 301,
+      message: {
+        message_id: 2,
+        text: "no",
+        from: { id: 9, first_name: "Sol" },
+        chat: { id: Number(CHAT_ID) },
+      },
+    },
+  ]);
+  const ch = makeChannel(mock);
+
+  const reply = await ch.awaitReply({ timeoutMs: 2000 });
+
+  assert.equal(reply.status, "answered");
+  assert.equal(reply.answer, "no");
+});

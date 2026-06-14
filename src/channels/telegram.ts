@@ -40,6 +40,16 @@ type TgResponse<T> = { ok: boolean; result?: T; description?: string };
 
 type FetchImpl = typeof fetch;
 
+/**
+ * Telegram bot commands (text beginning with "/", e.g. "/start", "/help") are
+ * client/protocol messages, never a human's answer to a free-text question.
+ * The most common offender is the "/start" Telegram auto-sends when a user
+ * first opens the bot, which would otherwise be returned as the reply.
+ */
+function isBotCommand(text: string): boolean {
+  return /^\/[A-Za-z0-9_]+(@\w+)?(\s|$)/.test(text.trim());
+}
+
 export type TelegramChannelConfig = {
   botToken: string;
   chatId: string;
@@ -120,6 +130,18 @@ export class TelegramChannel implements Channel {
   async awaitReply(options: AwaitReplyOptions): Promise<ReplyResult> {
     const deadline = Date.now() + options.timeoutMs;
 
+    // Anchor: only accept replies that arrive AFTER the question was sent.
+    // Telegram message ids are monotonically increasing per chat, so any
+    // update whose message predates the question (e.g. a queued `/start` from
+    // first opening the bot) must be ignored — otherwise it would be wrongly
+    // returned as the human's answer. Honors AwaitReplyOptions.sinceRef.
+    const sinceMessageId =
+      options.sinceRef != null ? Number(options.sinceRef.id) : undefined;
+    const isStale = (messageId: number | undefined): boolean =>
+      sinceMessageId != null &&
+      messageId != null &&
+      messageId <= sinceMessageId;
+
     while (Date.now() < deadline) {
       const remainingMs = deadline - Date.now();
       // Don't long-poll longer than the time we have left.
@@ -141,6 +163,11 @@ export class TelegramChannel implements Channel {
         // Free-text reply.
         const msg = update.message;
         if (msg?.text && this.fromConfiguredChat(msg.chat)) {
+          // Skip backlog that predates the question (e.g. a stale `/start`).
+          if (isStale(msg.message_id)) continue;
+          // Bot commands ("/start", "/help", ...) are never valid answers to a
+          // free-text question; treat them as noise and keep waiting.
+          if (isBotCommand(msg.text)) continue;
           return {
             status: "answered",
             answer: msg.text,
@@ -150,7 +177,7 @@ export class TelegramChannel implements Channel {
 
         // Inline-button tap.
         const cb = update.callback_query;
-        if (cb) {
+        if (cb && !isStale(cb.message?.message_id)) {
           // Best-effort: clear the client's loading spinner.
           try {
             await this.api("answerCallbackQuery", { callback_query_id: cb.id });
