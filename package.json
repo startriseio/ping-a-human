@@ -1,6 +1,6 @@
 {
   "name": "ping-a-human",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "An MCP server that adds a human-in-the-loop step to any AI pipeline by reaching a human on their own messaging app (Telegram first).",
   "type": "module",
   "bin": {
