@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { Channel } from "./channel.js";
@@ -17,8 +18,22 @@ import { runSetup } from "./setup.js";
  * surfaces as a tool error result instead of crashing at startup. Tests inject
  * a stub Channel through `channelOptions.channel`.
  */
+/** Read this package's version from package.json so MCP serverInfo never drifts. */
+function packageVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    // dist/index.js -> ../package.json
+    const pkg = JSON.parse(
+      readFileSync(join(here, "..", "package.json"), "utf8")
+    ) as { version?: string };
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 export function createServer(channelOptions: CreateChannelOptions = {}): McpServer {
-  const server = new McpServer({ name: "ping-a-human", version: "0.1.0" });
+  const server = new McpServer({ name: "ping-a-human", version: packageVersion() });
 
   const resolveChannel = (): Channel => createChannel(channelOptions);
 
