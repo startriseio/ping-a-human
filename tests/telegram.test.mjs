@@ -148,6 +148,34 @@ test("awaitReply resolves a button tap and answers the callback query", async ()
   );
 });
 
+test("awaitReply accepts a button tap whose message_id <= sinceRef (regression)", async () => {
+  // A callback_query's `message` is the bot's OWN question, so its message_id
+  // equals (or is <=) the sinceRef anchor. Before the fix the isStale check
+  // dropped every such tap, leaving the human's spinner spinning forever.
+  const mock = makeMockFetch();
+  const ch = makeChannel(mock);
+
+  await ch.send("pick", { choices: ["Yes", "No"] });
+  mock.enqueue("getUpdates", [
+    {
+      update_id: 30,
+      callback_query: {
+        id: "cbq2",
+        data: "c1",
+        from: { id: 9, username: "heidi" },
+        // message_id equals the question id we anchor on below.
+        message: { message_id: 50, chat: { id: Number(CHAT_ID) } },
+      },
+    },
+  ]);
+
+  const reply = await ch.awaitReply({ timeoutMs: 2000, sinceRef: { id: "50" } });
+
+  assert.equal(reply.status, "answered");
+  assert.equal(reply.answer, "No");
+  assert.equal(reply.respondent.id, "9");
+});
+
 test("awaitReply advances the getUpdates offset to update_id + 1", async () => {
   const mock = makeMockFetch();
   // First poll returns a non-matching update (different chat) so the loop
