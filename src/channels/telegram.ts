@@ -175,9 +175,14 @@ export class TelegramChannel implements Channel {
           };
         }
 
-        // Inline-button tap.
+        // Inline-button tap. Note: a callback_query's `message` is the bot's
+        // OWN question (the message the buttons are attached to), so its
+        // message_id equals the question's id — applying the isStale anchor
+        // here would wrongly drop every tap (id <= sinceRef) and leave the
+        // human's spinner loading forever. Taps are inherently post-question
+        // (the button only exists on a message we just sent), so accept them.
         const cb = update.callback_query;
-        if (cb && !isStale(cb.message?.message_id)) {
+        if (cb) {
           // Best-effort: clear the client's loading spinner.
           try {
             await this.api("answerCallbackQuery", { callback_query_id: cb.id });
