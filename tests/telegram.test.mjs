@@ -117,19 +117,29 @@ test("awaitReply resolves a free-text reply from the configured chat", async () 
   assert.equal(reply.respondent.name, "Ada");
 });
 
+// Read the actual callback_data tokens the channel minted for the most recent
+// send-with-choices. Tokens carry a per-send random prefix, so tests must use
+// the real value rather than a hardcoded "c0".
+function tokensFromLastSend(mock) {
+  const sends = mock.callsTo("sendMessage");
+  const body = sends[sends.length - 1].body;
+  return body.reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
+}
+
 test("awaitReply resolves a button tap and answers the callback query", async () => {
   const mock = makeMockFetch();
   const ch = makeChannel(mock);
 
   // First send with choices so the channel knows token -> value mapping.
   await ch.send("pick", { choices: ["Yes", "No"] });
-  // Telegram sends callback_data of the tapped button; "c0" maps to "Yes".
+  const [yesToken] = tokensFromLastSend(mock);
+  // Telegram sends callback_data of the tapped button; the first token -> "Yes".
   mock.enqueue("getUpdates", [
     {
       update_id: 20,
       callback_query: {
         id: "cbq1",
-        data: "c0",
+        data: yesToken,
         from: { id: 7, username: "grace" },
         message: { message_id: 5, chat: { id: Number(CHAT_ID) } },
       },
@@ -150,18 +160,19 @@ test("awaitReply resolves a button tap and answers the callback query", async ()
 
 test("awaitReply accepts a button tap whose message_id <= sinceRef (regression)", async () => {
   // A callback_query's `message` is the bot's OWN question, so its message_id
-  // equals (or is <=) the sinceRef anchor. Before the fix the isStale check
-  // dropped every such tap, leaving the human's spinner spinning forever.
+  // equals (or is <=) the sinceRef anchor. The isStale anchor must NOT be
+  // applied to taps, or it would drop every one and spin the spinner forever.
   const mock = makeMockFetch();
   const ch = makeChannel(mock);
 
   await ch.send("pick", { choices: ["Yes", "No"] });
+  const [, noToken] = tokensFromLastSend(mock);
   mock.enqueue("getUpdates", [
     {
       update_id: 30,
       callback_query: {
         id: "cbq2",
-        data: "c1",
+        data: noToken,
         from: { id: 9, username: "heidi" },
         // message_id equals the question id we anchor on below.
         message: { message_id: 50, chat: { id: Number(CHAT_ID) } },
@@ -174,6 +185,51 @@ test("awaitReply accepts a button tap whose message_id <= sinceRef (regression)"
   assert.equal(reply.status, "answered");
   assert.equal(reply.answer, "No");
   assert.equal(reply.respondent.id, "9");
+});
+
+test("awaitReply ignores a stale tap whose token is from another question (regression)", async () => {
+  // Reproduces the real Cursor bug: Telegram redelivers a tap from an EARLIER
+  // question (its token is not in the current question's map). It must NOT be
+  // returned as this question's answer; the channel keeps waiting and resolves
+  // only the genuine tap on the current question's button.
+  const mock = makeMockFetch();
+  const ch = makeChannel(mock);
+
+  await ch.send("Apply migration?", { choices: ["Yes", "No"] });
+  const [yesToken] = tokensFromLastSend(mock);
+
+  // First poll: a stale tap from a previous question (unknown token).
+  mock.enqueue("getUpdates", [
+    {
+      update_id: 40,
+      callback_query: {
+        id: "stale",
+        data: "old9z0", // not minted by the current send
+        from: { id: 1, username: "ghost" },
+        message: { message_id: 5, chat: { id: Number(CHAT_ID) } },
+      },
+    },
+  ]);
+  // Second poll: the genuine tap on THIS question.
+  mock.enqueue("getUpdates", [
+    {
+      update_id: 41,
+      callback_query: {
+        id: "real",
+        data: yesToken,
+        from: { id: 7, username: "grace" },
+        message: { message_id: 5, chat: { id: Number(CHAT_ID) } },
+      },
+    },
+  ]);
+
+  const reply = await ch.awaitReply({ timeoutMs: 2000 });
+
+  assert.equal(reply.status, "answered");
+  assert.equal(reply.answer, "Yes");
+  assert.equal(reply.respondent.id, "7");
+  // The stale tap's spinner was still cleared (best effort), so both were answered.
+  assert.equal(mock.callsTo("answerCallbackQuery").length, 2);
 });
 
 test("awaitReply advances the getUpdates offset to update_id + 1", async () => {

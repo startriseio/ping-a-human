@@ -113,10 +113,18 @@ export class TelegramChannel implements Channel {
 
     if (options?.choices && options.choices.length > 0) {
       // Build inline buttons. callback_data is capped at 64 bytes by Telegram,
-      // so use a short index token and map it back to the choice value.
+      // so use a short token and map it back to the choice value.
+      //
+      // The token carries a per-send random prefix so it is UNIQUE to this
+      // question. Telegram can redeliver a stale tap from an earlier question
+      // (getUpdates backlog), and a fixed token like "c0" would then collide
+      // with this question's first choice and be wrongly returned as the
+      // answer. A unique prefix means a stale tap's token simply won't be in
+      // the current map, so awaitReply can recognize and ignore it.
       this.callbackChoices.clear();
+      const nonce = Math.random().toString(36).slice(2, 8);
       const row = options.choices.map((choice, i) => {
-        const token = `c${i}`;
+        const token = `${nonce}${i}`;
         this.callbackChoices.set(token, choice);
         return { text: choice, callback_data: token };
       });
@@ -175,29 +183,34 @@ export class TelegramChannel implements Channel {
           };
         }
 
-        // Inline-button tap. Note: a callback_query's `message` is the bot's
-        // OWN question (the message the buttons are attached to), so its
-        // message_id equals the question's id — applying the isStale anchor
-        // here would wrongly drop every tap (id <= sinceRef) and leave the
-        // human's spinner loading forever. Taps are inherently post-question
-        // (the button only exists on a message we just sent), so accept them.
+        // Inline-button tap. We must NOT use the isStale message_id anchor
+        // here: a callback_query's `message` is the bot's OWN question, so its
+        // id always satisfies id <= sinceRef and the anchor would drop every
+        // tap. Instead we key off the unique per-send callback token: only a
+        // tap whose token is in the CURRENT question's map is a real answer to
+        // this question. A tap whose token is unknown is stale or redelivered
+        // (a previous question's button, or backlog Telegram replayed) — clear
+        // its spinner and keep waiting rather than returning it as the answer.
         const cb = update.callback_query;
         if (cb) {
           // Best-effort: clear the client's loading spinner.
           try {
             await this.api("answerCallbackQuery", { callback_query_id: cb.id });
           } catch {
-            // Non-fatal; the answer was still captured.
+            // Non-fatal.
           }
-          const answer =
-            (cb.data && this.callbackChoices.get(cb.data)) ?? cb.data ?? "";
-          if (this.fromConfiguredChat(cb.message?.chat) || cb.message == null) {
-            return {
-              status: "answered",
-              answer,
-              respondent: this.respondentFrom(cb.from),
-            };
+          const answer = cb.data ? this.callbackChoices.get(cb.data) : undefined;
+          if (answer === undefined) continue; // stale/unknown tap — keep waiting
+          // A known token is by definition our question; accept it (the chat
+          // guard only matters when a message envelope is present).
+          if (cb.message != null && !this.fromConfiguredChat(cb.message.chat)) {
+            continue;
           }
+          return {
+            status: "answered",
+            answer,
+            respondent: this.respondentFrom(cb.from),
+          };
         }
       }
     }

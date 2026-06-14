@@ -35,7 +35,18 @@ function packageVersion(): string {
 export function createServer(channelOptions: CreateChannelOptions = {}): McpServer {
   const server = new McpServer({ name: "ping-a-human", version: packageVersion() });
 
-  const resolveChannel = (): Channel => createChannel(channelOptions);
+  // Resolve the channel once and reuse it across tool calls. The Telegram
+  // channel owns the getUpdates offset cursor; a fresh channel per call would
+  // reset that cursor and let Telegram redeliver already-consumed updates
+  // (e.g. a previous button tap), which could be returned as the answer to the
+  // next question. A test-injected channel is honored as-is. Config errors are
+  // not cached, so a later call retries after the user fixes their config.
+  let cachedChannel: Channel | undefined;
+  const resolveChannel = (): Channel => {
+    if (channelOptions.channel) return channelOptions.channel;
+    if (!cachedChannel) cachedChannel = createChannel(channelOptions);
+    return cachedChannel;
+  };
 
   // 1.x registerTool: inputSchema is a ZodRawShape (plain object), NOT z.object(...).
   server.registerTool(
